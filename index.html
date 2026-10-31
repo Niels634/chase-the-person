@@ -114,7 +114,7 @@
   function showFatal(msg) {
     const el = document.createElement('div');
     el.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:#111;color:#fff;font-family:Inter,sans-serif;padding:24px;text-align:center;';
-    el.innerHTML = '<div><div style="font-size:28px;margin-bottom:12px">Chase The Nigger kon niet starten</div><div style="opacity:.85;max-width:420px;margin:0 auto">' + msg + '</div></div>';
+    el.innerHTML = '<div><div style="font-size:28px;margin-bottom:12px">Chase kon niet starten</div><div style="opacity:.85;max-width:420px;margin:0 auto">' + msg + '</div></div>';
     document.body.appendChild(el);
   }
   function boot() {
@@ -1634,6 +1634,9 @@
     let boostRemaining = 0, boostCooldown = 0, dustTimer = 0;
     let captureCutsceneTime = 0;
     let captureWagon = null;
+    let caughtShopShown = false;
+    const CAPTURE_OUTRO_ANIMATION_SECONDS = 5;
+    const CAPTURE_SHOP_EXTRA_DELAY_SECONDS = 5;
     let lastBankGain = 0;
     const tvgQuotes = [
       'Blijf op koers.',
@@ -1815,10 +1818,8 @@
         document.getElementById('btn-retry').onclick = restart;
       }
       if (gameState === 'caught') {
-        document.getElementById('play-again').classList.add('show');
-        bindShopButtons(document.getElementById('play-again'));
-        document.getElementById('btn-again').onclick = restart;
-        showTvg('Verdachte ingehaald!', true);
+        // Keep the shop and replay controls hidden while the capture outro plays.
+        showTvg('Verdachte aangehouden.', true);
       }
       const modeLocked = gameState === 'playing';
       const modeBtn = document.createElement('button');
@@ -1849,6 +1850,7 @@
       try { lastBankGain = cashOutRun(score, true); } catch (err) { lastBankGain = 0; }
       gameState = 'caught';
       captureCutsceneTime = 0;
+      caughtShopShown = false;
       if (captureWagon) { scene.remove(captureWagon); captureWagon = null; }
       runnerLead = Math.min(runnerLead, 3.2);
       runnerX = playerX;
@@ -1863,7 +1865,7 @@
       if (radioPulse) radioPulse.visible = false;
       buildHUD();
       if (gameMode === 0) {
-        showTvg('Agent: “Blijf rustig. Ik houd je onder controle.”  Verdachte: “I can’t breathe!”', true);
+        showTvg('Agent: “U bent aangehouden. Blijf rustig.”  Verdachte: “Ik werk mee.”', true);
       } else {
         showTvg('De soldaat draagt de verdachte naar een oude goederenwagon.', true);
         // One old wooden freight wagon, parked on a short siding beside the route.
@@ -1996,6 +1998,7 @@
     function restart() {
       if (captureWagon) { scene.remove(captureWagon); captureWagon = null; }
       captureCutsceneTime = 0;
+      caughtShopShown = false;
       playerLane = 1; targetLane = 1; playerX = 0; playerZ = 0; distance = 0; score = 0;
       spawnTimer = 0; whipCrack = 0; whipCd = 0; runnerX = 0; runnerLane = 1;
       boostRemaining = 0; boostCooldown = 0; dustTimer = 0;
@@ -2013,6 +2016,9 @@
       runnerGroup.rotation.set(0, Math.PI, 0); runnerGroup.position.y = 0;
       playerChar.rightArmPivot.rotation.set(0, 0, 0); playerChar.leftArmPivot.rotation.set(0, 0, 0);
       playerChar.leftLegPivot.rotation.set(0, 0, 0); playerChar.rightLegPivot.rotation.set(0, 0, 0);
+      playerChar.leftKneePivot.rotation.set(0, 0, 0); playerChar.rightKneePivot.rotation.set(0, 0, 0);
+      playerChar.leftArmPivot.userData.kneePivot.rotation.set(0, 0, 0);
+      playerChar.rightArmPivot.userData.kneePivot.rotation.set(0, 0, 0);
       obstacles.forEach((o) => scene.remove(o.mesh)); obstacles.length = 0;
       sparks.forEach((s) => scene.remove(s)); sparks.length = 0;
       hitFx.forEach((fx) => scene.remove(fx.group)); hitFx.length = 0;
@@ -2243,18 +2249,35 @@
       if (gameState === 'caught') {
         captureCutsceneTime += dt;
         if (gameMode === 0) {
-          // Agent kneels beside the suspect and keeps control at shoulder/upper torso level.
-          const t = Math.min(1, captureCutsceneTime / 1.4);
-          playerChar.leftLegPivot.rotation.x = -0.95 * t;
-          playerChar.leftLegPivot.userData.kneePivot && (playerChar.leftLegPivot.userData.kneePivot.rotation.x = 1.15 * t);
-          playerChar.rightLegPivot.rotation.x = 0.55 * t;
-          playerChar.rightArmPivot.rotation.x = -0.85 * t;
-          playerChar.leftArmPivot.rotation.x = -0.7 * t;
-          runnerGroup.position.y = 0.08 - 0.015 * t;
-          runnerGroup.rotation.x = 0.12 * t;
-          if (captureCutsceneTime > 3.5 && captureCutsceneTime < 3.5 + dt) {
-            showTvg('Verdachte: “I can’t breathe!”  Agent: “Ik haal de druk weg en roep hulp.”', true);
-          }
+          // Stylized arrest pose: the suspect lies flat while the agent holds a
+          // one-knee stance with the knee hovering visibly above the head, without contact.
+          const t = Math.min(1, captureCutsceneTime / 1.35);
+          const ease = t * t * (3 - 2 * t);
+          playerGroup.position.x = playerX + 0.2 * ease;
+          playerGroup.position.z = playerZ - 4.8 * ease;
+          playerGroup.position.y = 0.14 - 0.025 * ease;
+          playerGroup.rotation.y = Math.PI + 0.18 * ease;
+
+          // The left knee is raised over the head area with a visible clearance gap.
+          playerChar.leftLegPivot.rotation.x = -1.08 * ease;
+          playerChar.leftLegPivot.rotation.z = -0.08 * ease;
+          playerChar.leftKneePivot.rotation.x = 1.42 * ease;
+          playerChar.rightLegPivot.rotation.x = 0.58 * ease;
+          playerChar.rightLegPivot.rotation.z = 0.08 * ease;
+          playerChar.rightKneePivot.rotation.x = 0.32 * ease;
+
+          // Arms stay lowered in a controlled, non-graphic arrest pose.
+          playerChar.rightArmPivot.rotation.x = -0.34 * ease;
+          playerChar.leftArmPivot.rotation.x = -0.34 * ease;
+          playerChar.rightArmPivot.rotation.z = -0.08 * ease;
+          playerChar.leftArmPivot.rotation.z = 0.08 * ease;
+          const rightElbow = playerChar.rightArmPivot.userData.kneePivot;
+          const leftElbow = playerChar.leftArmPivot.userData.kneePivot;
+          if (rightElbow) rightElbow.rotation.x = 0.5 * ease;
+          if (leftElbow) leftElbow.rotation.x = 0.5 * ease;
+          runnerGroup.position.set(playerX, 0.08, playerZ - 3.2);
+          runnerGroup.rotation.order = 'YXZ';
+          runnerGroup.rotation.set(Math.PI / 2, Math.PI, 0);
         } else {
           // The soldier carries the suspect across to the open side door of the parked wagon.
           if (captureWagon) {
@@ -2301,6 +2324,19 @@
       } else {
         dx = playerX * 0.35; dy = 5.6; dz = playerZ + 10; ly = 1.5; lz = playerZ - 6;
       }
+      // The shop appears only after the five-second outro and five more seconds.
+      const shopRevealAt = CAPTURE_OUTRO_ANIMATION_SECONDS + CAPTURE_SHOP_EXTRA_DELAY_SECONDS;
+      if (gameState === 'caught' && !caughtShopShown && captureCutsceneTime >= shopRevealAt) {
+        caughtShopShown = true;
+        const playAgain = document.getElementById('play-again');
+        if (playAgain) {
+          playAgain.classList.add('show');
+          bindShopButtons(playAgain);
+          const again = document.getElementById('btn-again');
+          if (again) again.onclick = restart;
+        }
+      }
+
       const follow = gameState === 'playing' ? 4 : 3;
       camX += (dx - camX) * Math.min(1, follow * dt);
       camY += (dy - camY) * Math.min(1, follow * dt);
